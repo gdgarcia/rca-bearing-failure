@@ -190,3 +190,83 @@ Two pathways must be distinguished by physical evidence:
 3. Does SCADA retain **std/min/max** tags for wind speed/direction?
 4. Obtain **IEC class, OEM load certificate, met-mast data, rear-bearing seal/heat-treatment details, front-bearing condition**.
 5. Define file name and version control for this document.
+
+---
+
+## Appendix A — Post-OpenFAST analysis toolchain
+
+OpenFAST alone stops at the **shaft/hub loads**. Getting from there to a bearing verdict requires three layers: drivetrain system loads → bearing internal loads → lubrication/film and life.
+
+### A.1 Interface — what OpenFAST provides
+
+Extract from OpenFAST the rotor hub **6-DOF time series** (or low-speed-shaft loads) at the main shaft:
+
+- **Forces:** Fx, Fy, Fz
+- **Moments:** Mx, My, Mz
+- **Plus:** shaft torque and rotor speed
+
+This is the **input to Layer 1**. It is **not** a bearing load. Alternatively, the **OEM load certificate** may replace OpenFAST as the load source entirely.
+
+### A.2 Layer 1 — Drivetrain system model → bearing reaction loads
+
+The main shaft is a **statically indeterminate system** (front 230/900 + rear 231/630 + gearbox restraint). The reaction split depends on relative stiffness, fits/clearance and bedplate/housing flexibility. Tools:
+
+- **Simpack** (Dassault) — de-facto wind drivetrain MBD; flexible bodies via **Abaqus CMS/superelements**, bearing elements, transient events (gusts, stops, grid faults).
+- **Adams / MSC** or **Simcenter 3D Motion** (Siemens) — equivalent general MBD.
+- **MBDyn** — open-source MBD; low cost, no built-in bearing life.
+- **Romax / Masta** — can model the drivetrain system directly, serving as both Layer 1 and Layer 2.
+
+Output: rear 231/630 reaction components **Fa, Fr and moment** over the load spectrum.
+
+### A.3 Layer 2 — Bearing internal load, film and life
+
+The step the original "OpenFAST → Abaqus" chain skipped: roller load distribution, two-row split, contact stress, EHL film (κ, Λ), and ISO 281 / ISO/TS 16281 life.
+
+| Tool | Strength | Notes |
+|---|---|---|
+| **BEARINX (Schaeffler)** | Deepest bearing analysis: roller-by-roller load, flexible rings, EHL, life; combined Fa/Fr + moment | Gold standard for a single critical bearing; often via Schaeffler consulting |
+| **Romax (Hexagon)** | Whole drivetrain + bearings + gearbox; EHL, life, load sharing | Strong one-tool option; also gear micropitting |
+| **Masta** | Gearbox/drivetrain + bearing rating and EHL | Comparable to Romax |
+| **KISSsoft** | Bearing rating/life (ISO 281/16281), gear/bearing calcs | Good for selection and quick rating; less full-system dynamics |
+| **SKF SimPro / SKF tools** | Bearing-focused simulation and life | Vendor-specific |
+| **Abaqus (in-house)** | Housing/bedplate flexibility, local stress, fit pressure | Feed stiffness to Layer 1; **not** for micropitting prediction |
+
+### A.4 Layer 3 — Lubrication / damage criterion
+
+Film thickness and κ/Λ come from the Layer-2 tool. **Micropitting has no universally accepted analytical standard**; bearing tools approximate it and it must be corroborated by film ratio, material/surface criteria and lab evidence (Stage 3).
+
+### A.5 Recommended chains
+
+**Best-science:**
+```
+OpenFAST (hub/LSS 6-DOF loads)
+      │
+      ▼
+Simpack  (+ Abaqus CMS for bedplate/housing flexibility)
+      → rear 231/630 reaction: Fa, Fr, moment over the load spectrum
+      │
+      ▼
+Romax / Masta / BEARINX
+      → two-row roller load split, contact stress, film (κ, Λ), ISO 16281 life
+      │
+      ▼
+predicted life vs. observed ~1.5 yr → validate with teardown/grease
+```
+
+**Budget / consultant:** use the **OEM load certificate** instead of OpenFAST and a **single integrated tool** (**Romax** or **Masta**) for both system and bearing; feed bedplate/housing stiffness from **Abaqus**.
+
+**Minimal:** beam/quasi-static model of the shaft-bearing-gearbox system (Python/MATLAB or FE) plus a bearing rating tool — cheaper but less reliable for the statically indeterminate load split.
+
+### A.6 Required interfaces / deliverables per tool
+
+- **OpenFAST →** hub/LSS 6-DOF time series (or load spectrum) at the main shaft; rotor speed; torque.
+- **Abaqus →** bedplate/housing **superelement (CMS) / stiffness matrix** and local bearing-seat stress and fit pressure; input to Layer 1, not a bearing predictor.
+- **Layer 1 (MBD) →** rear-bearing reaction time series or spectrum: **Fa, Fr, moment**.
+- **Layer 2 (bearing tool) →** per-row roller load distribution, contact stress, film thickness (κ, Λ), ISO 281/TS 16281 life, and damage localization (downwind vs. upwind row, azimuth) for comparison with Stage 3 metallurgy.
+
+### A.7 Ownership and partnering
+
+The MBD and bearing-life tools carry licenses plus specialist know-how and are **not** in-house. Realistic division:
+
+- **In-house:** SCADA analytics, load-spectrum processing, **Abaqus** housing/bedplate flexibility.
+- **Partner/subcontract:** MBD (Simpack/Adams) + bearing life (Romax/Masta/BEARINX), delivered against a defined SoW.
